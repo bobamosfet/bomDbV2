@@ -1,0 +1,8 @@
+item_part_number,item_type,manufacturer,description,category,unit_of_measure,quantity,ref_des,distributor,distributor_pn,unit_cost,notes
+PCB-CTRL-001,assembly,,Control Board PCB Assembly,Assembly,EA,1,A1,,,Import this BOM first before importing PSU-001,
+PCB-DISPLAY-001,assembly,,Display Board PCB Assembly,Assembly,EA,1,A2,,,Import this BOM first before importing PSU-001,
+ENCLOSURE-ALU,component,Hammond,Aluminum Enclosure 6x4x2,Enclosure,EA,1,,Digikey,HM1234-ND,15,
+CABLE-PWR,assembly,,Power Cable Assembly,Assembly,EA,1,W1,,,Import this BOM first before importing PSU-001,
+FAN-40MM,component,Sunon,40mm 12V DC Fan,Fan,EA,1,F1,Mouser,SU12345,4.5,
+SCREW-M3-6MM,component,,M3 x 6mm Pan Head Screw,Hardware,EA,8,,McMaster,92000A113,0.04,For enclosure mounting
+LABEL-WARNING,component,Brady,Warning Label 2x1 inch,Label,EA,1,,Digikey,LABEL-WARN,0.5,High voltage warning

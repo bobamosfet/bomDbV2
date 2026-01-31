@@ -706,7 +706,7 @@ class BOMSystemGUI:
         tree_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
         
         columns = ('Type', 'Part Number', 'Mfr/Product', 'Description', 'UOM', 
-                  'Qty', 'Ref Des', 'Cost')
+                  'Qty', 'Ref Des', 'Unit Cost')
         self.bom_tree = ttk.Treeview(tree_frame, columns=columns, show='headings', height=20)
         
         for col in columns:
@@ -1132,6 +1132,9 @@ class BOMSystemGUI:
                 
                 for row_num, row in enumerate(reader, start=2):  # Start at 2 (header is row 1)
                     try:
+                        # Sanitize row - CSV reader can return None for missing trailing fields
+                        row = {k: (v if v is not None else '') for k, v in row.items()}
+                        
                         if not row.get('item_part_number') or not row.get('item_type'):
                             continue
                         
@@ -1207,10 +1210,15 @@ class BOMSystemGUI:
             
             self.refresh_assembly_lists()
             self.refresh_assemblies()
+            self.refresh_components(False)
             
-            # Load the imported BOM
-            self.bom_assembly_var.set(f"{part_number} - ... (Rev ...)")
-            self.load_bom_viewer()
+            # Load the imported BOM using actual product data
+            product = self.db.get_product(part_number)
+            if product:
+                self.bom_assembly_var.set(
+                    f"{product['part_number']} - {product['description']} (Rev {product['revision']})"
+                )
+                self.load_bom_viewer()
             
         except Exception as e:
             messagebox.showerror("Import Error", f"Error importing BOM:\n{str(e)}")
@@ -2029,13 +2037,26 @@ class BOMSystemGUI:
         ttk.Label(dialog, text="(All components from all sub-assembly levels, quantities summed)",
                  font=('TkDefaultFont', 9, 'italic')).pack(pady=5)
         
-        # Create tree
+        # Bottom frame with total and buttons - pack BEFORE tree so it anchors to bottom
+        bottom_frame = ttk.Frame(dialog)
+        bottom_frame.pack(fill=tk.X, padx=10, pady=10, side=tk.BOTTOM)
+        
+        self._flat_total_label = ttk.Label(bottom_frame, text="Total Cost: $0.00",
+                 font=('TkDefaultFont', 12, 'bold'))
+        self._flat_total_label.pack(side=tk.LEFT)
+        
+        ttk.Button(bottom_frame, text="Close", 
+                  command=dialog.destroy).pack(side=tk.RIGHT, padx=5)
+        ttk.Button(bottom_frame, text="Export to CSV", 
+                  command=lambda: (dialog.destroy(), self.export_flattened_bom())).pack(side=tk.RIGHT, padx=5)
+        
+        # Create tree - pack after bottom frame so it fills remaining space
         tree_frame = ttk.Frame(dialog)
         tree_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
         
         columns = ('Part Number', 'Manufacturer', 'Description', 'Category', 'UOM', 
                   'Total Qty', 'Unit Cost', 'Extended Cost', 'Distributor')
-        tree = ttk.Treeview(tree_frame, columns=columns, show='headings', height=25)
+        tree = ttk.Treeview(tree_frame, columns=columns, show='headings')
         
         for col in columns:
             tree.heading(col, text=col)
@@ -2070,17 +2091,8 @@ class BOMSystemGUI:
                 item['distributor'] or ''
             ))
         
-        # Total label
-        total_frame = ttk.Frame(dialog)
-        total_frame.pack(fill=tk.X, padx=10, pady=10)
-        
-        ttk.Label(total_frame, text=f"Total Cost: ${total_cost:.2f}",
-                 font=('TkDefaultFont', 12, 'bold')).pack(side=tk.LEFT)
-        
-        ttk.Button(total_frame, text="Export to CSV", 
-                  command=lambda: (dialog.destroy(), self.export_flattened_bom())).pack(side=tk.RIGHT, padx=5)
-        ttk.Button(total_frame, text="Close", 
-                  command=dialog.destroy).pack(side=tk.RIGHT, padx=5)
+        # Update total label now that we have the actual cost
+        self._flat_total_label.config(text=f"Total Cost: ${total_cost:.2f}")
     
     def view_exploded_bom(self):
         """View exploded BOM in a dialog"""
@@ -2103,13 +2115,22 @@ class BOMSystemGUI:
         ttk.Label(dialog, text="(Hierarchical view with item numbers - indented by level)",
                  font=('TkDefaultFont', 9, 'italic')).pack(pady=5)
         
-        # Create tree
+        # Bottom frame with buttons - pack BEFORE tree so it anchors to bottom
+        btn_frame = ttk.Frame(dialog)
+        btn_frame.pack(fill=tk.X, padx=10, pady=10, side=tk.BOTTOM)
+        
+        ttk.Button(btn_frame, text="Close", 
+                  command=dialog.destroy).pack(side=tk.RIGHT, padx=5)
+        ttk.Button(btn_frame, text="Export to CSV", 
+                  command=lambda: (dialog.destroy(), self.export_exploded_bom())).pack(side=tk.RIGHT, padx=5)
+        
+        # Create tree - pack after bottom frame so it fills remaining space
         tree_frame = ttk.Frame(dialog)
         tree_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
         
         columns = ('Item #', 'Level', 'Type', 'Part Number', 'Manufacturer', 
                   'Description', 'UOM', 'Qty', 'Ref Des', 'Unit Cost', 'Ext Cost')
-        tree = ttk.Treeview(tree_frame, columns=columns, show='headings', height=25)
+        tree = ttk.Treeview(tree_frame, columns=columns, show='headings')
         
         for col in columns:
             tree.heading(col, text=col)
@@ -2130,7 +2151,6 @@ class BOMSystemGUI:
         
         # Populate tree
         for item in exploded:
-            # Format part number with indentation
             indented_pn = item['indent'] + item['part_number']
             
             tree.insert('', 'end', values=(
@@ -2148,15 +2168,6 @@ class BOMSystemGUI:
             ), tags=('assembly' if item['item_type'] == 'assembly' else 'component',))
         
         tree.tag_configure('assembly', background='#e8f4f8')
-        
-        # Buttons
-        btn_frame = ttk.Frame(dialog)
-        btn_frame.pack(fill=tk.X, padx=10, pady=10)
-        
-        ttk.Button(btn_frame, text="Export to CSV", 
-                  command=lambda: (dialog.destroy(), self.export_exploded_bom())).pack(side=tk.RIGHT, padx=5)
-        ttk.Button(btn_frame, text="Close", 
-                  command=dialog.destroy).pack(side=tk.RIGHT, padx=5)
     
     def cleanup_duplicates(self):
         """Clean up duplicate component sources"""

@@ -1,0 +1,11 @@
+item_part_number,item_type,manufacturer,description,category,unit_of_measure,quantity,ref_des,distributor,distributor_pn,unit_cost,notes
+RES-10K-0805,component,Yageo,10K Resistor 0805 1%,Resistor,EA,5,"R1,R2,R3,R4,R5",Digikey,311-10.0KCRCT-ND,0.10,
+RES-1K-0805,component,Yageo,1K Resistor 0805 1%,Resistor,EA,3,"R6,R7,R8",Digikey,311-1.0KCRCT-ND,0.10,
+CAP-100UF-16V,component,Panasonic,100uF 16V Electrolytic,Capacitor,EA,2,"C1,C2",Mouser,667-ECA-1CM101,0.30,Low ESR type
+CAP-10UF-0805,component,Murata,10uF 25V X5R 0805,Capacitor,EA,4,"C3,C4,C5,C6",Digikey,490-3886-1-ND,0.25,
+IC-LM317,component,Texas Instruments,LM317 Voltage Regulator TO-220,IC,EA,1,U1,Digikey,LM317T-ND,0.95,Requires heatsink
+LED-RED-0805,component,Kingbright,Red LED 0805 SMD,LED,EA,1,D1,Arrow,APT2012EC,0.15,
+CONN-HDR-2x5,component,Samtec,2x5 Pin Header 2.54mm,Connector,EA,1,J1,Newark,SAMTEC-TSW-105-07-G-D,1.25,Shrouded header
+WIRE-22AWG-RED,component,Alpha Wire,22AWG Stranded Red Wire,Wire,FT,3.5,,Mouser,602-1234,0.25,Sold in 100ft spools at $25/spool
+HEATSINK-TO220,component,Aavid,TO-220 Heatsink,Hardware,EA,1,,Digikey,HS123-ND,0.75,For LM317
+SCREW-M3-10MM,component,,M3 x 10mm Pan Head Screw,Hardware,EA,4,,McMaster,92000A115,0.05,Stainless steel
