@@ -1,0 +1,19 @@
+item_part_number,item_type,manufacturer,description,category,unit_of_measure,quantity,ref_des,distributor,distributor_pn,unit_cost,notes
+RES-10K-0805,component,Yageo,10K Resistor 0805 1%,Resistor,EA,10,"R1,R2,R3,R4,R5,R6,R7,R8,R15,R16",Digikey,311-10.0KCRCT-ND,0.09,Price reduced! Added R15 R16
+RES-1K-0805,component,Yageo,1K Resistor 0805 1%,Resistor,EA,4,"R9,R10,R11,R12",Digikey,311-1.0KCRCT-ND,0.11,Price increased
+RES-100-0805,component,Yageo,100 Ohm Resistor 0805 1%,Resistor,EA,2,"R13,R14",Digikey,311-100CRCT-ND,,Keep old price - blank
+CAP-100UF-16V,component,Panasonic,100uF 16V Electrolytic,Capacitor,EA,4,"C1,C2,C3,C20",Mouser,667-ECA-1CM101,0.28,Added C20
+CAP-10UF-0805,component,Murata,10uF 25V X5R 0805,Capacitor,EA,6,"C4,C5,C6,C7,C8,C9",Digikey,490-3886-1-ND,0.25,
+CAP-0.1UF-0805,component,Samsung,0.1uF 50V X7R 0805,Capacitor,EA,10,"C10,C11,C12,C13,C14,C15,C16,C17,C18,C19",Digikey,1276-1003-1-ND,0.08,
+IC-LM317,component,Texas Instruments,LM317 Adjustable Regulator TO-220,IC,EA,1,U1,Digikey,LM317T-ND,0.95,
+IC-LM7805,component,Texas Instruments,LM7805 5V Regulator TO-220,IC,EA,1,U2,Digikey,LM7805CT-ND,0.85,
+IC-ATMEGA328,component,Microchip,ATmega328P-AU TQFP-32,IC,EA,1,U3,Digikey,ATMEGA328P-AU-ND,2.35,Price reduced
+XTAL-16MHZ,component,Abracon,16MHz Crystal HC-49S,Crystal,EA,1,Y1,Digikey,ABL-16.000MHZ-B2-ND,0.45,
+LED-RED-0805,component,Kingbright,Red LED 0805 SMD,LED,EA,3,"D1,D2,D3",Arrow,APT2012EC,0.15,
+LED-GREEN-0805,component,Kingbright,Green LED 0805 SMD,LED,EA,2,"D4,D5",Arrow,APT2012SRC/J3-PRV,0.18,
+DIODE-1N4148,component,ON Semi,1N4148 Switching Diode SOD-123,Diode,EA,4,"D6,D7,D8,D9",Digikey,1N4148WSCT-ND,0.12,
+CONN-HDR-2x10,component,Samtec,2x10 Pin Header 2.54mm,Connector,EA,1,J1,Newark,SAMTEC-TSW-110-07-G-D,1.85,
+CONN-BARREL-JACK,component,CUI,DC Barrel Jack 5.5x2.1mm,Connector,EA,1,J2,Digikey,CP-002A-ND,0.75,
+HEATSINK-TO220,component,Aavid,TO-220 Heatsink,Hardware,EA,2,,Digikey,HS123-ND,0.75,
+SCREW-M3-6MM,component,,M3 x 6mm Pan Head Screw,Hardware,EA,4,,McMaster,92000A113,0.04,
+IC-74HC595,component,Texas Instruments,74HC595 Shift Register SOIC-16,IC,EA,1,U4,Digikey,296-1600-5-ND,0.42,Added new IC

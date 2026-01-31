@@ -1,0 +1,16 @@
+item_part_number,item_type,manufacturer,description,category,unit_of_measure,quantity,ref_des,distributor,distributor_pn,unit_cost,notes
+PCB-POWER-001,assembly,,Power Supply PCB,Assembly,EA,1,A1,,,Import PCB-POWER-001 first
+PCB-DISPLAY-001,assembly,,Display PCB,Assembly,EA,1,A2,,,Import PCB-DISPLAY-001 first
+CABLE-PWR-001,assembly,,Power Cable Assembly,Assembly,EA,1,W1,,,Import CABLE-PWR-001 first
+CABLE-PWR-001,assembly,,Power Cable Assembly,Assembly,EA,1,W2,,,Second cable
+ENCLOSURE-ALU,component,Hammond,Aluminum Enclosure 8x6x3,Enclosure,EA,1,,Digikey,HM1598BBK-ND,18.50,Black anodized
+FAN-60MM,component,Sunon,60mm 12V DC Fan,Fan,EA,1,F1,Mouser,SU-MF60151V1-1000U-A99,5.25,Cooling fan
+STANDOFF-M3-10MM,component,,M3 10mm Hex Standoff,Hardware,EA,8,,McMaster,93505A120,0.15,PCB mounting
+SCREW-M3-6MM,component,,M3 x 6mm Pan Head Screw,Hardware,EA,16,,McMaster,92000A113,0.04,For standoffs and enclosure
+SCREW-M3-8MM,component,,M3 x 8mm Pan Head Screw,Hardware,EA,4,,McMaster,92000A114,0.05,Fan mounting
+WASHER-M3,component,,M3 Flat Washer,Hardware,EA,8,,McMaster,93475A210,0.02,
+NUT-M3,component,,M3 Hex Nut,Hardware,EA,4,,McMaster,90591A250,0.03,Fan mounting
+GROMMET-RUBBER,component,Heyco,Rubber Grommet 0.5 inch,Hardware,EA,2,,Digikey,HEY1234-ND,0.25,Cable strain relief
+FEET-RUBBER,component,3M,Rubber Feet Self-Adhesive,Hardware,EA,4,,Digikey,3M-SJ5302-ND,0.45,Anti-slip feet
+LABEL-WARNING,component,Brady,Warning Label High Voltage,Label,EA,1,,Digikey,LABEL-WARN-HV,0.50,Safety label
+LABEL-PRODUCT,component,Brady,Product Label 3x2 inch,Label,EA,1,,Digikey,LABEL-PROD,0.75,Company branding

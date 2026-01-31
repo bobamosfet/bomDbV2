@@ -1,0 +1,10 @@
+item_part_number,item_type,manufacturer,description,category,unit_of_measure,quantity,ref_des,distributor,distributor_pn,unit_cost,notes
+WIRE-22AWG-RED,component,Alpha Wire,22AWG Stranded Red Wire,Wire,FT,6,,Mouser,602-1234-RED,0.25,Sold in 100ft spools at $25
+WIRE-22AWG-BLACK,component,Alpha Wire,22AWG Stranded Black Wire,Wire,FT,6,,Mouser,602-1234-BLK,0.25,Sold in 100ft spools at $25
+WIRE-22AWG-GREEN,component,Alpha Wire,22AWG Stranded Green Wire,Wire,FT,3,,Mouser,602-1234-GRN,0.25,Sold in 100ft spools at $25
+CONN-MOLEX-4PIN,component,Molex,4-Pin Molex Connector Male,Connector,EA,1,,Digikey,WM2001-ND,0.85,Power connector
+CONN-MOLEX-4PIN-F,component,Molex,4-Pin Molex Connector Female,Connector,EA,1,,Digikey,WM2002-ND,0.85,Power connector
+CONN-PIN-MALE,component,Molex,Crimp Pin Male 22-24AWG,Pin,EA,4,,Digikey,WM2034-ND,0.08,For male connector
+CONN-PIN-FEMALE,component,Molex,Crimp Pin Female 22-24AWG,Pin,EA,4,,Digikey,WM2035-ND,0.08,For female connector
+HEATSHRINK-1-4IN,component,3M,Heat Shrink 1/4 inch,Sleeving,IN,8,,Digikey,3M-FP301-1/4-ND,0.15,2 inch per connection
+LABEL-CABLE,component,Brady,Cable Label 0.5x2 inch,Label,EA,2,,Digikey,LABEL-CABLE,0.35,Cable identification
