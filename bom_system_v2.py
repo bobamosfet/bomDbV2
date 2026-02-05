@@ -10,6 +10,7 @@ import sqlite3
 from datetime import datetime
 import csv
 import json
+import os
 from decimal import Decimal
 
 
@@ -29,6 +30,43 @@ class BOMDatabase:
         self.conn.row_factory = sqlite3.Row
         self.cursor = self.conn.cursor()
     
+    
+    def verify_database_schema(self):
+        """Verify that the database has the correct schema"""
+        required_tables = [
+            'components', 'component_sources', 'products', 
+            'bom_entries', 'sub_assemblies', 'revision_history'
+        ]
+        
+        # Check if all required tables exist
+        self.cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
+        existing_tables = [row['name'] for row in self.cursor.fetchall()]
+        
+        missing_tables = [t for t in required_tables if t not in existing_tables]
+        
+        if missing_tables:
+            return False, f"Missing tables: {', '.join(missing_tables)}"
+        
+        # Verify key columns exist in each table
+        table_columns = {
+            'components': ['component_id', 'mfg_part_number', 'manufacturer'],
+            'component_sources': ['source_id', 'component_id', 'distributor'],
+            'products': ['product_id', 'part_number', 'description', 'revision'],
+            'bom_entries': ['entry_id', 'product_id', 'component_id', 'quantity'],
+            'sub_assemblies': ['sub_assembly_id', 'parent_product_id', 'child_product_id', 'quantity'],
+            'revision_history': ['revision_id', 'product_id', 'revision', 'bom_snapshot']
+        }
+        
+        for table, required_cols in table_columns.items():
+            self.cursor.execute(f"PRAGMA table_info({table})")
+            existing_cols = [row['name'] for row in self.cursor.fetchall()]
+            missing_cols = [c for c in required_cols if c not in existing_cols]
+            
+            if missing_cols:
+                return False, f"Table '{table}' missing columns: {', '.join(missing_cols)}"
+        
+        return True, "Database schema is valid"
+
     def create_tables(self):
         """Create database schema"""
         
@@ -611,12 +649,206 @@ class BOMSystemGUI:
         self.root.title("BOM Management System v2")
         self.root.geometry("1400x900")
         
-        self.db = BOMDatabase()
+        self.db = None
         self.current_product_id = None
         self.bom_item_metadata = {}
         
+        # Column sort tracking for Assembly Management tab
+        self.assy_sort_column = None
+        self.assy_sort_reverse = False
+        
+        # Column sort tracking for Component Management tab
+        self.comp_sort_column = None
+        self.comp_sort_reverse = False
+        
+        # CRITICAL FIX: Setup UI first, then load database
         self.setup_ui()
+        
+        # Load database after UI is ready - use after_idle to ensure window is drawn
+        self.root.after_idle(self.load_database_config)
     
+    
+    def load_database_config(self):
+        """Load database configuration from settings file or prompt user"""
+        config_file = "bom_config.json"
+        
+        if os.path.exists(config_file):
+            try:
+                with open(config_file, 'r') as f:
+                    config = json.load(f)
+                    db_path = config.get('database_path', 'bom_system_v2.db')
+                    
+                    # Check if the database file exists
+                    if os.path.exists(db_path):
+                        self.db = BOMDatabase(db_path)
+                        # Verify schema
+                        valid, msg = self.db.verify_database_schema()
+                        if not valid:
+                            messagebox.showerror("Database Schema Error", 
+                                f"The database at {db_path} has an invalid schema:\n\n{msg}\n\n"
+                                "Please select a valid database or create a new one.")
+                            self.prompt_database_selection()
+                        else:
+                            # Database is valid, refresh UI
+                            self.refresh_assembly_lists()
+                            self.refresh_assemblies()
+                            self.refresh_components(False)
+                        return
+            except Exception as e:
+                messagebox.showwarning("Config Error", 
+                    f"Error loading configuration:\n{str(e)}\n\nPlease select database location.")
+        
+        # No config or database doesn't exist - prompt user
+        self.prompt_database_selection()
+    
+    def prompt_database_selection(self):
+        """Show dialog to select or create database"""
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Database Configuration")
+        
+        # Center the dialog on screen
+        dialog.update_idletasks()
+        width = 600
+        height = 250
+        x = (dialog.winfo_screenwidth() // 2) - (width // 2)
+        y = (dialog.winfo_screenheight() // 2) - (height // 2)
+        dialog.geometry(f"{width}x{height}+{x}+{y}")
+        
+        dialog.transient(self.root)
+        
+        ttk.Label(dialog, text="BOM Database Configuration", 
+                 font=('TkDefaultFont', 12, 'bold')).pack(pady=15)
+        
+        ttk.Label(dialog, text="Select an existing database or create a new one:").pack(pady=5)
+        
+        # Current path display
+        path_frame = ttk.Frame(dialog)
+        path_frame.pack(pady=10, padx=20, fill=tk.X)
+        
+        ttk.Label(path_frame, text="Database:").pack(side=tk.LEFT, padx=5)
+        path_var = tk.StringVar(value="bom_system_v2.db")
+        path_entry = ttk.Entry(path_frame, textvariable=path_var, width=50)
+        path_entry.pack(side=tk.LEFT, padx=5, fill=tk.X, expand=True)
+        
+        # Buttons
+        btn_frame = ttk.Frame(dialog)
+        btn_frame.pack(pady=10)
+        
+        def browse_existing():
+            filename = filedialog.askopenfilename(
+                title="Select Existing Database",
+                filetypes=[("SQLite Database", "*.db"), ("All files", "*.*")],
+                initialdir=os.getcwd()
+            )
+            if filename:
+                path_var.set(filename)
+        
+        def browse_new():
+            filename = filedialog.asksaveasfilename(
+                title="Create New Database",
+                filetypes=[("SQLite Database", "*.db"), ("All files", "*.*")],
+                defaultextension=".db",
+                initialfile="bom_system_v2.db",
+                initialdir=os.getcwd()
+            )
+            if filename:
+                path_var.set(filename)
+        
+        def confirm_selection():
+            db_path = path_var.get().strip()
+            
+            if not db_path:
+                messagebox.showerror("Error", "Please specify a database path")
+                return
+            
+            # Check if file exists
+            if os.path.exists(db_path):
+                # Verify it's a valid database
+                try:
+                    test_db = BOMDatabase(db_path)
+                    valid, msg = test_db.verify_database_schema()
+                    test_db.close()
+                    
+                    if not valid:
+                        if messagebox.askyesno("Invalid Database", 
+                            f"The selected database has schema errors:\n\n{msg}\n\n"
+                            "Would you like to create a new database at this location?\n"
+                            "(This will DELETE the existing file!)",
+                            icon='warning'):
+                            try:
+                                os.remove(db_path)
+                            except:
+                                pass
+                        else:
+                            return
+                except Exception as e:
+                    if messagebox.askyesno("Invalid Database", 
+                        f"The selected file is not a valid database:\n{str(e)}\n\n"
+                        "Create a new database at this location?\n"
+                        "(This will DELETE the existing file!)",
+                        icon='warning'):
+                        try:
+                            os.remove(db_path)
+                        except:
+                            pass
+                    else:
+                        return
+            
+            # Create or open database
+            try:
+                self.db = BOMDatabase(db_path)
+                
+                # Save configuration
+                config = {'database_path': db_path}
+                with open('bom_config.json', 'w') as f:
+                    json.dump(config, f, indent=2)
+                
+                dialog.destroy()
+                
+                # Refresh UI after database is loaded
+                self.refresh_assembly_lists()
+                self.refresh_assemblies()
+                self.refresh_components(False)
+                
+            except Exception as e:
+                messagebox.showerror("Error", f"Failed to create/open database:\n{str(e)}")
+        
+        ttk.Button(btn_frame, text="Browse Existing...", 
+                  command=browse_existing).pack(side=tk.LEFT, padx=5)
+        ttk.Button(btn_frame, text="Create New...", 
+                  command=browse_new).pack(side=tk.LEFT, padx=5)
+        
+        ttk.Separator(dialog, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=15)
+        
+        confirm_frame = ttk.Frame(dialog)
+        confirm_frame.pack(pady=10)
+        
+        ttk.Button(confirm_frame, text="Confirm", 
+                  command=confirm_selection).pack(side=tk.LEFT, padx=5)
+        ttk.Button(confirm_frame, text="Exit", 
+                  command=self.root.quit).pack(side=tk.LEFT, padx=5)
+        
+        # Make dialog modal but don't block with wait_window
+        # This allows the main window to remain responsive
+        dialog.grab_set()
+        dialog.focus_set()
+        
+        # Disable closing with X button - must use Confirm or Exit
+        dialog.protocol("WM_DELETE_WINDOW", lambda: None)
+    
+    def change_database(self):
+        """Allow user to change database location"""
+        if messagebox.askyesno("Change Database", 
+            "Changing the database will close the current database.\n\n"
+            "Continue?"):
+            if self.db:
+                self.db.close()
+            self.prompt_database_selection()
+            # Refresh all views
+            self.refresh_assembly_lists()
+            self.refresh_assemblies()
+            self.refresh_components(False)
+
     def setup_ui(self):
         """Create the user interface"""
         # Menu bar
@@ -625,6 +857,8 @@ class BOMSystemGUI:
         
         file_menu = tk.Menu(menubar, tearoff=0)
         menubar.add_cascade(label="File", menu=file_menu)
+        file_menu.add_command(label="Change Database...", command=self.change_database)
+        file_menu.add_separator()
         file_menu.add_command(label="Exit", command=self.root.quit)
         
         tools_menu = tk.Menu(menubar, tearoff=0)
@@ -661,7 +895,7 @@ class BOMSystemGUI:
         self.setup_revision_tab()
         
         # Refresh assembly lists after all tabs are created
-        self.refresh_assembly_lists()
+        # Do not call it here as db is not yet initialized
     
     def setup_bom_viewer_tab(self):
         """Setup BOM viewer tab"""
@@ -809,7 +1043,8 @@ class BOMSystemGUI:
         self.comp_tree = ttk.Treeview(tree_frame, columns=columns, show='headings', height=25)
         
         for col in columns:
-            self.comp_tree.heading(col, text=col)
+            self.comp_tree.heading(col, text=col, 
+                                   command=lambda c=col: self.sort_components_by_column(c))
             if col == 'Description':
                 self.comp_tree.column(col, width=250)
             else:
@@ -832,7 +1067,7 @@ class BOMSystemGUI:
         ttk.Button(action_frame, text="View Where Used", 
                   command=self.view_component_usage).pack(side=tk.LEFT, padx=5)
         
-        self.refresh_components(False)
+        # self.refresh_components(False)  # Will be called after database loads
     
     def setup_assembly_tab(self):
         """Setup assembly management tab"""
@@ -856,7 +1091,8 @@ class BOMSystemGUI:
         self.assy_tree = ttk.Treeview(tree_frame, columns=columns, show='headings', height=25)
         
         for col in columns:
-            self.assy_tree.heading(col, text=col)
+            self.assy_tree.heading(col, text=col,
+                                   command=lambda c=col: self.sort_assemblies_by_column(c))
             if col == 'Description':
                 self.assy_tree.column(col, width=300)
             else:
@@ -926,8 +1162,87 @@ class BOMSystemGUI:
         ttk.Button(action_frame, text="Export Revision BOM", 
                   command=self.export_revision_bom).pack(side=tk.LEFT, padx=5)
     
+    
+    def sort_assemblies_by_column(self, col):
+        """Sort assembly tree by clicked column"""
+        # Get all items with their values
+        items = [(self.assy_tree.set(item, col), item) for item in self.assy_tree.get_children('')]
+        
+        # Determine if we're reversing the sort
+        reverse = False
+        if self.assy_sort_column == col:
+            reverse = not self.assy_sort_reverse
+        
+        self.assy_sort_column = col
+        self.assy_sort_reverse = reverse
+        
+        # Sort items
+        try:
+            # Try numeric sort for # Items and Cost columns
+            if col == '# Items':
+                items.sort(key=lambda x: int(x[0]) if x[0] and x[0].isdigit() else 0, 
+                          reverse=reverse)
+            elif col == 'Cost':
+                items.sort(key=lambda x: float(x[0].replace('$', '')) if x[0] and x[0] != '' else 0, 
+                          reverse=reverse)
+            else:
+                items.sort(key=lambda x: x[0].lower() if x[0] else '', reverse=reverse)
+        except:
+            items.sort(key=lambda x: str(x[0]).lower(), reverse=reverse)
+        
+        # Rearrange items in sorted order
+        for index, (val, item) in enumerate(items):
+            self.assy_tree.move(item, '', index)
+        
+        # Update column heading to show sort direction
+        for column in self.assy_tree['columns']:
+            heading = column
+            if column == col:
+                heading = f"{column} {'▼' if reverse else '▲'}"
+            self.assy_tree.heading(column, text=heading,
+                                   command=lambda c=column: self.sort_assemblies_by_column(c))
+    
+    def sort_components_by_column(self, col):
+        """Sort component tree by clicked column"""
+        # Get all items with their values
+        items = [(self.comp_tree.set(item, col), item) for item in self.comp_tree.get_children('')]
+        
+        # Determine if we're reversing the sort
+        reverse = False
+        if self.comp_sort_column == col:
+            reverse = not self.comp_sort_reverse
+        
+        self.comp_sort_column = col
+        self.comp_sort_reverse = reverse
+        
+        # Sort items
+        try:
+            # Try numeric sort for Cost column
+            if col == 'Cost':
+                items.sort(key=lambda x: float(x[0].replace('$', '')) if x[0] and x[0] != '' else 0, 
+                          reverse=reverse)
+            else:
+                items.sort(key=lambda x: x[0].lower() if x[0] else '', reverse=reverse)
+        except:
+            items.sort(key=lambda x: str(x[0]).lower(), reverse=reverse)
+        
+        # Rearrange items in sorted order
+        for index, (val, item) in enumerate(items):
+            self.comp_tree.move(item, '', index)
+        
+        # Update column heading to show sort direction
+        for column in self.comp_tree['columns']:
+            heading = column
+            if column == col:
+                heading = f"{column} {'▼' if reverse else '▲'}"
+            self.comp_tree.heading(column, text=heading,
+                                   command=lambda c=column: self.sort_components_by_column(c))
+
     def refresh_assembly_lists(self):
         """Refresh all assembly dropdown lists"""
+        if self.db is None:
+            return  # Database not loaded yet
+        
         products = self.db.get_all_products()
         product_list = [f"{p['part_number']} - {p['description']} (Rev {p['revision']})" 
                        for p in products]
@@ -999,7 +1314,7 @@ class BOMSystemGUI:
         new_rev_entry.insert(0, "A")
         new_rev_entry.grid(row=2, column=1, sticky=tk.W, padx=5, pady=2)
         
-        result = {'part_number': None, 'save_revision': False, 'notes': ''}
+        result = {'part_number': None, 'save_revision': False, 'notes': '', 'is_new': False}
         
         def proceed():
             mode = mode_var.get()
@@ -1041,6 +1356,7 @@ class BOMSystemGUI:
                 result['part_number'] = part_number
                 result['description'] = description
                 result['revision'] = revision
+                result['is_new'] = True
                 dialog.destroy()
                 self.process_import(filename, result)
         
@@ -1202,6 +1518,15 @@ class BOMSystemGUI:
                     
                     except Exception as e:
                         raise Exception(f"Error on row {row_num} ({item_pn if 'item_pn' in locals() else 'unknown'}): {str(e)}")
+            
+            # NEW: Save initial revision for newly created assemblies
+            if import_info.get('is_new', False):
+                product = self.db.get_product(part_number)
+                self.db.save_bom_as_revision(
+                    product_id,
+                    product['revision'],
+                    "Initial BOM import"
+                )
             
             messagebox.showinfo("Import Complete", 
                 f"Successfully imported BOM for {part_number}\n\n"
@@ -1543,6 +1868,9 @@ class BOMSystemGUI:
     
     def refresh_components(self, unused_only):
         """Refresh component list"""
+        if self.db is None:
+            return  # Database not loaded yet
+        
         for item in self.comp_tree.get_children():
             self.comp_tree.delete(item)
         
@@ -1733,6 +2061,9 @@ class BOMSystemGUI:
     
     def refresh_assemblies(self):
         """Refresh assembly list"""
+        if self.db is None:
+            return  # Database not loaded yet
+        
         for item in self.assy_tree.get_children():
             self.assy_tree.delete(item)
         
