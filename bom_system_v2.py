@@ -9,6 +9,7 @@ from tkinter import ttk, messagebox, filedialog
 import sqlite3
 from datetime import datetime
 import csv
+import io
 import json
 import os
 from decimal import Decimal
@@ -1251,130 +1252,255 @@ class BOMSystemGUI:
         self.cost_assembly_combo['values'] = product_list
         self.rev_assembly_combo['values'] = product_list
     
+    def parse_csv_metadata(self, filename):
+        """Parse assembly metadata from comment rows at the top of a CSV file.
+        
+        Metadata rows start with '#' and use the format:
+            #key,value
+        
+        Supported keys:
+            #assembly_part_number,ABC-1234
+            #assembly_description,My Assembly Description
+            #assembly_revision,A
+        
+        Returns a dict with keys: part_number, description, revision.
+        Returns None if no assembly_part_number is found.
+        """
+        metadata = {
+            'part_number': None,
+            'description': '',
+            'revision': 'A'
+        }
+        
+        try:
+            with open(filename, 'r', encoding='utf-8') as f:
+                for line in f:
+                    line = line.strip()
+                    if not line.startswith('#'):
+                        break  # Stop at first non-metadata row
+                    
+                    # Remove leading '#' and split on first comma only
+                    content = line[1:]
+                    if ',' in content:
+                        key, value = content.split(',', 1)
+                        key = key.strip().lower()
+                        value = value.strip()
+                        
+                        if key == 'assembly_part_number':
+                            metadata['part_number'] = value
+                        elif key == 'assembly_description':
+                            metadata['description'] = value
+                        elif key == 'assembly_revision':
+                            metadata['revision'] = value
+        except Exception as e:
+            raise Exception(f"Error reading metadata from {os.path.basename(filename)}: {str(e)}")
+        
+        if not metadata['part_number']:
+            return None
+        
+        return metadata
+
+    def _scan_csv_sub_assemblies(self, filename):
+        """Scan a CSV file and return the set of sub-assembly part numbers it references."""
+        sub_assemblies = set()
+        try:
+            with open(filename, 'r', encoding='utf-8') as f:
+                lines = [line for line in f.readlines() if not line.strip().startswith('#')]
+            
+            import io
+            reader = csv.DictReader(io.StringIO(''.join(lines)))
+            for row in reader:
+                if row.get('item_type', '').strip().lower() == 'assembly':
+                    pn = row.get('item_part_number', '').strip()
+                    if pn:
+                        sub_assemblies.add(pn)
+        except Exception:
+            pass  # Errors will be caught later during actual import
+        return sub_assemblies
+
+    def _topological_sort_files(self, file_metadata):
+        """Sort files so that sub-assemblies are imported before their parents.
+        
+        Uses Kahn's algorithm. Files whose sub-assemblies aren't in the batch
+        (i.e. already in the DB or will become placeholders) have no ordering
+        constraint and are imported first.
+        
+        Returns the sorted list, or raises an Exception on circular dependencies.
+        """
+        # Build a map: part_number -> (filename, metadata)
+        pn_to_file = {}
+        for fn, metadata in file_metadata:
+            pn_to_file[metadata['part_number']] = (fn, metadata)
+        
+        # Build dependency graph: for each file, which other files in this batch
+        # must be imported first?
+        # deps[part_number] = set of part numbers this file depends on (within batch only)
+        deps = {}
+        for fn, metadata in file_metadata:
+            pn = metadata['part_number']
+            sub_asms = self._scan_csv_sub_assemblies(fn)
+            # Only count dependencies that are in this batch
+            deps[pn] = sub_asms & set(pn_to_file.keys())
+        
+        # Kahn's algorithm
+        sorted_pns = []
+        # In-degree: how many batch files depend on needing this one first
+        in_degree = {pn: 0 for pn in deps}
+        for pn, pn_deps in deps.items():
+            for dep in pn_deps:
+                in_degree[dep] = in_degree.get(dep, 0)  # ensure key exists
+                # pn depends on dep, but in_degree tracks how many things need dep done first
+                # Actually: in_degree[pn] should count how many deps pn has
+        
+        # Recalculate: in_degree[pn] = number of files that must come before pn
+        in_degree = {pn: len(pn_deps) for pn, pn_deps in deps.items()}
+        
+        queue = [pn for pn, deg in in_degree.items() if deg == 0]
+        
+        while queue:
+            pn = queue.pop(0)
+            sorted_pns.append(pn)
+            
+            # For every file that depends on pn, reduce its in-degree
+            for other_pn, other_deps in deps.items():
+                if pn in other_deps:
+                    in_degree[other_pn] -= 1
+                    if in_degree[other_pn] == 0:
+                        queue.append(other_pn)
+        
+        if len(sorted_pns) != len(deps):
+            # Find the cycle participants for a useful error message
+            remaining = [pn for pn in deps if pn not in sorted_pns]
+            raise Exception(
+                f"Circular dependency detected among: {', '.join(remaining)}.\n\n"
+                "A sub-assembly cannot reference its own parent."
+            )
+        
+        return [(pn_to_file[pn][0], pn_to_file[pn][1]) for pn in sorted_pns]
+
     def import_bom(self):
-        """Import BOM from CSV"""
-        filename = filedialog.askopenfilename(
-            title="Select BOM CSV file",
+        """Import BOM from one or more CSV files with embedded assembly metadata.
+        
+        Each CSV file must contain metadata rows at the top specifying the target
+        assembly (see parse_csv_metadata for format). Multiple files can be selected;
+        each file's BOM is imported into the assembly specified in its metadata.
+        
+        Files are automatically sorted by dependency order (leaf assemblies first)
+        so they can be selected in any order.
+        
+        If a file targets an existing assembly, the user is prompted to confirm
+        replacement and optionally save a revision snapshot.
+        
+        The batch aborts on the first error, reporting which file caused the failure.
+        """
+        filenames = filedialog.askopenfilenames(
+            title="Select BOM CSV file(s)",
             filetypes=[("CSV files", "*.csv"), ("All files", "*.*")]
         )
         
-        if not filename:
+        if not filenames:
             return
         
-        # Create dialog for assembly selection
-        dialog = tk.Toplevel(self.root)
-        dialog.title("Import BOM")
-        dialog.geometry("600x400")
-        dialog.transient(self.root)
-        dialog.grab_set()
-        
-        ttk.Label(dialog, text="Select Assembly for BOM Import:", 
-                 font=('TkDefaultFont', 11, 'bold')).pack(pady=10)
-        
-        # Radio button to choose mode
-        mode_var = tk.StringVar(value="existing")
-        
-        mode_frame = ttk.Frame(dialog)
-        mode_frame.pack(pady=10)
-        
-        ttk.Radiobutton(mode_frame, text="Import to existing assembly", 
-                       variable=mode_var, value="existing").pack(anchor=tk.W)
-        ttk.Radiobutton(mode_frame, text="Create new assembly", 
-                       variable=mode_var, value="new").pack(anchor=tk.W)
-        
-        # Existing assembly selection
-        existing_frame = ttk.LabelFrame(dialog, text="Existing Assembly", padding=10)
-        existing_frame.pack(fill=tk.X, padx=20, pady=5)
-        
-        ttk.Label(existing_frame, text="Assembly:").pack(side=tk.LEFT, padx=5)
-        existing_var = tk.StringVar()
-        existing_combo = ttk.Combobox(existing_frame, textvariable=existing_var,
-                                      width=50, state='readonly')
-        
-        products = self.db.get_all_products()
-        product_list = [f"{p['part_number']} - {p['description']} (Rev {p['revision']})" 
-                       for p in products]
-        existing_combo['values'] = product_list
-        existing_combo.pack(side=tk.LEFT, padx=5)
-        
-        # New assembly entry
-        new_frame = ttk.LabelFrame(dialog, text="New Assembly", padding=10)
-        new_frame.pack(fill=tk.X, padx=20, pady=5)
-        
-        ttk.Label(new_frame, text="Part Number:").grid(row=0, column=0, sticky=tk.W, padx=5, pady=2)
-        new_pn_entry = ttk.Entry(new_frame, width=30)
-        new_pn_entry.grid(row=0, column=1, padx=5, pady=2)
-        
-        ttk.Label(new_frame, text="Description:").grid(row=1, column=0, sticky=tk.W, padx=5, pady=2)
-        new_desc_entry = ttk.Entry(new_frame, width=30)
-        new_desc_entry.grid(row=1, column=1, padx=5, pady=2)
-        
-        ttk.Label(new_frame, text="Revision:").grid(row=2, column=0, sticky=tk.W, padx=5, pady=2)
-        new_rev_entry = ttk.Entry(new_frame, width=10)
-        new_rev_entry.insert(0, "A")
-        new_rev_entry.grid(row=2, column=1, sticky=tk.W, padx=5, pady=2)
-        
-        result = {'part_number': None, 'save_revision': False, 'notes': '', 'is_new': False}
-        
-        def proceed():
-            mode = mode_var.get()
+        # Phase 1: Validate all files have assembly metadata before starting
+        file_metadata = []  # list of (filename, metadata_dict)
+        for fn in filenames:
+            try:
+                metadata = self.parse_csv_metadata(fn)
+            except Exception as e:
+                messagebox.showerror("Import Error", str(e))
+                return
             
-            if mode == "existing":
-                selected = existing_var.get()
-                if not selected:
-                    messagebox.showerror("Error", "Please select an assembly")
+            if metadata is None:
+                messagebox.showerror(
+                    "Missing Assembly Info",
+                    f"File '{os.path.basename(fn)}' does not contain assembly metadata.\n\n"
+                    "Each CSV file must include metadata rows at the top, e.g.:\n\n"
+                    "  #assembly_part_number,ABC-1234\n"
+                    "  #assembly_description,My Assembly\n"
+                    "  #assembly_revision,A\n\n"
+                    "Import aborted."
+                )
+                return
+            
+            file_metadata.append((fn, metadata))
+        
+        # Phase 2: Sort files by dependency order (leaf assemblies first)
+        if len(file_metadata) > 1:
+            try:
+                file_metadata = self._topological_sort_files(file_metadata)
+            except Exception as e:
+                messagebox.showerror("Import Error", str(e))
+                return
+        
+        # Phase 3: Process each file sequentially
+        imported_count = 0
+        total_files = len(file_metadata)
+        
+        for fn, metadata in file_metadata:
+            part_number = metadata['part_number']
+            existing_product = self.db.get_product(part_number)
+            
+            if existing_product:
+                # Assembly exists — prompt user with replace/revision dialog
+                result = {'part_number': None, 'save_revision': False, 'notes': '', 'cancelled': False}
+                self._show_replace_dialog_blocking(part_number, fn, result, imported_count, total_files)
+                
+                if result['cancelled']:
+                    # User cancelled — abort entire batch
+                    if imported_count > 0:
+                        messagebox.showinfo(
+                            "Import Cancelled",
+                            f"Import cancelled by user at file '{os.path.basename(fn)}'.\n\n"
+                            f"{imported_count} of {total_files} file(s) were imported before cancellation."
+                        )
                     return
                 
-                part_number = selected.split(' - ')[0]
-                product = self.db.get_product(part_number)
-                
-                if product:
-                    # Assembly exists - show replace dialog
-                    dialog.destroy()
-                    self.show_replace_dialog(part_number, filename, result)
-                else:
-                    messagebox.showerror("Error", "Selected assembly not found")
-                    
-            elif mode == "new":
-                part_number = new_pn_entry.get().strip()
-                description = new_desc_entry.get().strip()
-                revision = new_rev_entry.get().strip() or "A"
-                
-                if not part_number:
-                    messagebox.showerror("Error", "Part number is required")
-                    return
-                
-                # Check if it already exists
-                existing_product = self.db.get_product(part_number)
-                if existing_product:
-                    messagebox.showerror("Error", 
-                        f"Assembly {part_number} already exists!\n\n"
-                        "Use 'Import to existing assembly' option to replace its BOM.")
-                    return
-                
-                # Create new product
-                result['part_number'] = part_number
-                result['description'] = description
-                result['revision'] = revision
-                result['is_new'] = True
-                dialog.destroy()
-                self.process_import(filename, result)
+                import_info = {
+                    'part_number': part_number,
+                    'save_revision': result['save_revision'],
+                    'notes': result['notes'],
+                    'is_new': False
+                }
+            else:
+                # New assembly — create it from metadata
+                import_info = {
+                    'part_number': part_number,
+                    'description': metadata['description'],
+                    'revision': metadata['revision'],
+                    'save_revision': False,
+                    'notes': '',
+                    'is_new': True
+                }
+            
+            # Process this file
+            try:
+                self.process_import(fn, import_info)
+            except Exception as e:
+                messagebox.showerror(
+                    "Import Error",
+                    f"Error importing file '{os.path.basename(fn)}':\n\n{str(e)}\n\n"
+                    f"{imported_count} of {total_files} file(s) were imported before this error."
+                )
+                return
+            
+            imported_count += 1
         
-        btn_frame = ttk.Frame(dialog)
-        btn_frame.pack(pady=20)
-        
-        ttk.Button(btn_frame, text="Cancel", 
-                  command=dialog.destroy).pack(side=tk.LEFT, padx=5)
-        ttk.Button(btn_frame, text="Import", 
-                  command=proceed).pack(side=tk.LEFT, padx=5)
-        
-        dialog.wait_window()
+        # Final summary for multi-file imports
+        if total_files > 1:
+            messagebox.showinfo(
+                "Batch Import Complete",
+                f"Successfully imported all {total_files} file(s)."
+            )
     
-    def show_replace_dialog(self, part_number, filename, result):
-        """Show dialog for replacing existing BOM"""
+    def _show_replace_dialog_blocking(self, part_number, filename, result, imported_so_far, total_files):
+        """Show dialog for replacing existing BOM. Blocks until user responds.
+        
+        Sets result['cancelled'] = True if user cancels, otherwise populates
+        result with save_revision and notes for the caller to use.
+        """
         dialog = tk.Toplevel(self.root)
         dialog.title("Replace Existing BOM")
-        dialog.geometry("500x250")
+        dialog.geometry("550x300")
         dialog.transient(self.root)
         dialog.grab_set()
         
@@ -1382,6 +1508,12 @@ class BOMSystemGUI:
         
         ttk.Label(dialog, text=f"Assembly {part_number} Rev {product['revision']} already exists", 
                  font=('TkDefaultFont', 11, 'bold')).pack(pady=10)
+        
+        progress_text = f"File: {os.path.basename(filename)}"
+        if total_files > 1:
+            progress_text += f"  ({imported_so_far + 1} of {total_files})"
+        ttk.Label(dialog, text=progress_text,
+                 font=('TkDefaultFont', 9, 'italic')).pack(pady=2)
         
         ttk.Label(dialog, text="The current BOM will be deleted and replaced\nwith the imported BOM.").pack(pady=5)
         
@@ -1397,21 +1529,31 @@ class BOMSystemGUI:
             result['part_number'] = part_number
             result['save_revision'] = save_var.get()
             result['notes'] = notes_entry.get().strip()
+            result['cancelled'] = False
             dialog.destroy()
-            self.process_import(filename, result)
+        
+        def cancel():
+            result['cancelled'] = True
+            dialog.destroy()
         
         btn_frame = ttk.Frame(dialog)
         btn_frame.pack(pady=20)
         
-        ttk.Button(btn_frame, text="Cancel", 
-                  command=dialog.destroy).pack(side=tk.LEFT, padx=5)
+        ttk.Button(btn_frame, text="Cancel Import", 
+                  command=cancel).pack(side=tk.LEFT, padx=5)
         ttk.Button(btn_frame, text="Replace BOM", 
                   command=proceed).pack(side=tk.LEFT, padx=5)
+        
+        # Handle window close (X button) as cancel
+        dialog.protocol("WM_DELETE_WINDOW", cancel)
         
         dialog.wait_window()
     
     def process_import(self, filename, import_info):
-        """Process the CSV import"""
+        """Process the CSV import.
+        
+        Raises exceptions on failure so the batch caller can report which file failed.
+        """
         part_number = import_info['part_number']
         if not part_number:
             return
@@ -1424,11 +1566,11 @@ class BOMSystemGUI:
                 product_id = product['product_id']
                 
                 # Save revision if requested
-                if import_info['save_revision']:
+                if import_info.get('save_revision'):
                     self.db.save_bom_as_revision(
                         product_id, 
                         product['revision'], 
-                        import_info['notes']
+                        import_info.get('notes', '')
                     )
                 
                 # Clear existing BOM
@@ -1439,12 +1581,21 @@ class BOMSystemGUI:
                 revision = import_info.get('revision', 'A')
                 product_id = self.db.add_or_update_product(part_number, description, revision)
             
-            # Read and import CSV
+            # Read and import CSV (skipping metadata rows that start with '#')
             imported_components = 0
             imported_assemblies = 0
             
             with open(filename, 'r', newline='', encoding='utf-8') as f:
-                reader = csv.DictReader(f)
+                # Skip metadata rows at top
+                lines = f.readlines()
+                data_lines = []
+                for line in lines:
+                    if line.strip().startswith('#'):
+                        continue
+                    data_lines.append(line)
+                
+                import io
+                reader = csv.DictReader(io.StringIO(''.join(data_lines)))
                 
                 for row_num, row in enumerate(reader, start=2):  # Start at 2 (header is row 1)
                     try:
@@ -1519,7 +1670,7 @@ class BOMSystemGUI:
                     except Exception as e:
                         raise Exception(f"Error on row {row_num} ({item_pn if 'item_pn' in locals() else 'unknown'}): {str(e)}")
             
-            # NEW: Save initial revision for newly created assemblies
+            # Save initial revision for newly created assemblies
             if import_info.get('is_new', False):
                 product = self.db.get_product(part_number)
                 self.db.save_bom_as_revision(
@@ -1546,7 +1697,7 @@ class BOMSystemGUI:
                 self.load_bom_viewer()
             
         except Exception as e:
-            messagebox.showerror("Import Error", f"Error importing BOM:\n{str(e)}")
+            raise Exception(f"{str(e)}")
     
     def load_bom_viewer(self, event=None):
         """Load BOM in viewer"""
@@ -1610,7 +1761,7 @@ class BOMSystemGUI:
         self.bom_cost_label.config(text=f"Total Cost: ${total_cost:.2f}")
     
     def export_bom(self):
-        """Export BOM to CSV (same format as import)"""
+        """Export BOM to CSV (same format as import, with assembly metadata)"""
         if not self.current_product_id:
             messagebox.showwarning("No BOM", "Please select an assembly first")
             return
@@ -1630,6 +1781,12 @@ class BOMSystemGUI:
             components, sub_assemblies = self.db.get_product_bom(self.current_product_id)
             
             with open(filename, 'w', newline='', encoding='utf-8') as f:
+                # Write assembly metadata rows
+                f.write(f"#assembly_part_number,{product['part_number']}\n")
+                if product['description']:
+                    f.write(f"#assembly_description,{product['description']}\n")
+                f.write(f"#assembly_revision,{product['revision']}\n")
+                
                 writer = csv.writer(f)
                 writer.writerow(['item_part_number', 'item_type', 'manufacturer', 'description',
                                'category', 'unit_of_measure', 'quantity', 'ref_des',
